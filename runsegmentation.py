@@ -171,8 +171,24 @@ def main():
                                                    roi_size=(96, 96, 16),
                                                    sw_batch_size=4,
                                                    predictor=model)
-            threshold = AsDiscrete(threshold=0.5)
+            
+            # Print intensity statistics before thresholding
+            output_np = test_output.cpu().numpy()
+            print(f"\nIntensity statistics for {corenames[i]}:")
+            print(f"Min intensity: {output_np.min():.4f}")
+            print(f"Max intensity: {output_np.max():.4f}")
+            print(f"Mean intensity: {output_np.mean():.4f}")
+            print(f"Median intensity: {np.median(output_np):.4f}")
+            
+            threshold = AsDiscrete(threshold=1.0)
             output_th = threshold(test_output).cpu()
+            
+            # Print statistics after thresholding
+            output_th_np = output_th.numpy()
+            print(f"\nAfter thresholding (threshold=1.0):")
+            print(f"Number of pixels above threshold: {np.sum(output_th_np > 0)}")
+            print(f"Number of pixels below threshold: {np.sum(output_th_np == 0)}")
+            print(f"Percentage of pixels above threshold: {(np.sum(output_th_np > 0) / output_th_np.size) * 100:.2f}%")
 
             img = nib.Nifti1Image(output_th[0,0,:,:,:].numpy(), np.eye(4))
             nib.save(img, os.path.join('outputs', f'{corenames[i]}.nii.gz'))
