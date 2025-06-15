@@ -1,0 +1,7 @@
+{
+    "model_name": "unet_dataset_2_default",
+    "network_type": "unet",
+    "threshold": null,
+    "timestamp": "2025-04-14 11:58:13",
+    "device": "cuda"
+}

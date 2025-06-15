@@ -31,9 +31,34 @@ from monai.data import (
     decollate_batch,
 )
 import torch
+import json
+from datetime import datetime
 
 def main():
     directory = 'models'
+
+    # Model configuration
+    net_type = 'UNet'  # network architecture: UNet, UNETR, DynUNet, or SegResNet
+    net_type = net_type.lower()
+    model_name = 'unet_dataset_2_default'
+    # ['dataset_2adamw_100k_num_heads_2', 'dynunet_dataset_2_100k', 'segresnet_dataset_2_default', 'unet_dataset_2_default'
+#  'unet_dataset_2_100k']
+    threshold_value = None
+
+    # Create metadata dictionary
+    metadata = {
+        "model_name": model_name,
+        "network_type": net_type,
+        "threshold": threshold_value,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "device": "cuda" if torch.cuda.is_available() else "cpu"
+    }
+
+    # Save metadata to JSON file
+    metadata_file = os.path.join('outputs', model_name, 'model_metadata.json')
+    os.makedirs(os.path.join('outputs', model_name), exist_ok=True)
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=4)
 
     ### My transforms
     test_transforms = Compose(
@@ -58,8 +83,6 @@ def main():
     # data_dir = os.path.join(rootpath,"Task09_Spleen") # "/dataset/"
     data_dir = os.path.join(rootpath,"soilcores")
     split_json = "dataset_2.json" # "dataset_0.json"
-    model_name = "dataset_2adamw_100k_num_heads_2"
-    # model_name = "unet_dataset_2_1000" # "unet_dataset_2_default" # "dynunet_dataset_2_100k"
 
     datasets = os.path.join(data_dir, split_json)
     test_files = load_decathlon_datalist(datasets, True, "test")
@@ -73,8 +96,6 @@ def main():
     print(corenames)
 
     # Apply model
-    net_type = 'UNETR' # network architecture: UNet, UNETR, DynUNet, or SegResNet
-    net_type = net_type.lower()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # network architecture: unet, unetr, dynunet, or segresnet
@@ -82,7 +103,7 @@ def main():
         class UNetWithSigmoid(UNet):
             def forward(self, x):
                 x = super().forward(x)
-                x = torch.sigmoid(x)
+                # x = torch.sigmoid(x)
                 return x
 
         # Initialize the UNet model with sigmoid
@@ -100,7 +121,7 @@ def main():
         class UNETRWithSigmoid(UNETR):
             def forward(self, x):
                 x = super().forward(x)
-                x = torch.sigmoid(x)
+                # x = torch.sigmoid(x)
                 return x
 
         model = UNETRWithSigmoid(
@@ -121,7 +142,7 @@ def main():
         class DynUNetWithSigmoid(DynUNet):
             def forward(self, x):
                 x = super().forward(x)
-                x = torch.sigmoid(x)
+                # x = torch.sigmoid(x)
                 return x
 
         # Initialize the DynUNet model with sigmoid
@@ -140,7 +161,7 @@ def main():
         class SegResNetWithSigmoid(SegResNet):
             def forward(self, x):
                 x = super().forward(x)
-                x = torch.sigmoid(x)
+                # x = torch.sigmoid(x)
                 return x
 
         # Initialize the SegResNet model with sigmoid
@@ -180,18 +201,24 @@ def main():
             print(f"Mean intensity: {output_np.mean():.4f}")
             print(f"Median intensity: {np.median(output_np):.4f}")
             
-            threshold = AsDiscrete(threshold=1.0)
-            output_th = threshold(test_output).cpu()
-            
-            # Print statistics after thresholding
-            output_th_np = output_th.numpy()
-            print(f"\nAfter thresholding (threshold=1.0):")
-            print(f"Number of pixels above threshold: {np.sum(output_th_np > 0)}")
-            print(f"Number of pixels below threshold: {np.sum(output_th_np == 0)}")
-            print(f"Percentage of pixels above threshold: {(np.sum(output_th_np > 0) / output_th_np.size) * 100:.2f}%")
+            if threshold_value is not None:
+                threshold = AsDiscrete(threshold=threshold_value)
+                output_th = threshold(test_output).cpu()
+                # Print statistics after thresholding
+                output_th_np = output_th.numpy()
+                print(f"\nAfter thresholding (threshold={threshold_value}):")
+                print(f"Number of pixels above threshold: {np.sum(output_th_np > 0)}")
+                print(f"Number of pixels below threshold: {np.sum(output_th_np == 0)}")
+                print(f"Percentage of pixels above threshold: {(np.sum(output_th_np > 0) / output_th_np.size) * 100:.2f}%")
+            else:
+                print("No thresholding applied")
+                # min_val = test_output.min()
+                # max_val = test_output.max()
+                # test_output = (test_output - min_val) / (max_val - min_val)
+                output_th = test_output.cpu()
 
             img = nib.Nifti1Image(output_th[0,0,:,:,:].numpy(), np.eye(4))
-            nib.save(img, os.path.join('outputs', f'{corenames[i]}.nii.gz'))
+            nib.save(img, os.path.join('outputs', model_name, f'{corenames[i]}.nii.gz'))
 
 if __name__ == '__main__':
     main()  
