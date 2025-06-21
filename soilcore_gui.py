@@ -2,7 +2,7 @@ import sys
 import os
 import numpy as np
 import nibabel as nib
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QSlider, QHBoxLayout, QComboBox, QMessageBox, QSpinBox, QDialog)
+from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QSlider, QHBoxLayout, QComboBox, QMessageBox, QSpinBox, QDialog, QListWidget, QTextEdit)
 from PyQt5.QtCore import Qt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -40,6 +40,7 @@ class NiftiViewer(QWidget):
         self.current_slice = 0
         self.seg_output_path = None
         self.image_folder_path = None
+        self.selected_folders = []  # List to store multiple selected folders
         self.init_ui()
 
     def init_ui(self):
@@ -128,9 +129,13 @@ class NiftiViewer(QWidget):
         topology_layout = QHBoxLayout()
         topology_layout.addWidget(QLabel('Root Topology Analysis:'))
         
-        self.select_folder_btn = QPushButton('Select Image Folder')
-        self.select_folder_btn.clicked.connect(self.select_image_folder)
+        self.select_folder_btn = QPushButton('Select Single Folder')
+        self.select_folder_btn.clicked.connect(self.select_single_folder)
         topology_layout.addWidget(self.select_folder_btn)
+        
+        self.select_multiple_folders_btn = QPushButton('Select Multiple Folders')
+        self.select_multiple_folders_btn.clicked.connect(self.select_multiple_folders)
+        topology_layout.addWidget(self.select_multiple_folders_btn)
         
         topology_layout.addWidget(QLabel('Pixel Range:'))
         self.pixel_range_spin = QSpinBox()
@@ -153,7 +158,91 @@ class NiftiViewer(QWidget):
         
         layout.addLayout(topology_layout)
 
+        # Selected folders display
+        folders_layout = QVBoxLayout()
+        folders_layout.addWidget(QLabel('Selected Soil Core Folders:'))
+        
+        # Add horizontal layout for list and remove button
+        folders_control_layout = QHBoxLayout()
+        
+        self.folders_list = QListWidget()
+        self.folders_list.setMaximumHeight(100)
+        folders_control_layout.addWidget(self.folders_list)
+        
+        # Remove button
+        self.remove_folder_btn = QPushButton('Remove Selected')
+        self.remove_folder_btn.clicked.connect(self.remove_selected_folder)
+        self.remove_folder_btn.setEnabled(False)
+        folders_control_layout.addWidget(self.remove_folder_btn)
+        
+        folders_layout.addLayout(folders_control_layout)
+        
+        # Clear all button
+        self.clear_all_btn = QPushButton('Clear All')
+        self.clear_all_btn.clicked.connect(self.clear_all_folders)
+        self.clear_all_btn.setEnabled(False)
+        folders_layout.addWidget(self.clear_all_btn)
+        
+        layout.addLayout(folders_layout)
+
         self.setLayout(layout)
+
+    def select_single_folder(self):
+        """Select a single folder containing 2D image files"""
+        folder_path = QFileDialog.getExistingDirectory(self, 'Select Image Folder')
+        if folder_path:
+            self.selected_folders = [folder_path]
+            self.image_folder_path = folder_path  # Keep for backward compatibility
+            self.update_folders_list()
+            self.check_and_enable_analysis()
+
+    def select_multiple_folders(self):
+        """Select multiple folders, each representing a soil core"""
+        # For multiple folder selection, we'll use a dialog approach
+        # Since QFileDialog doesn't support multiple folder selection directly,
+        # we'll use a custom approach
+        folder_path = QFileDialog.getExistingDirectory(self, 'Select Parent Directory Containing Soil Core Folders')
+        if folder_path:
+            # Get all subdirectories that contain image files
+            import glob
+            subdirs = []
+            for item in os.listdir(folder_path):
+                item_path = os.path.join(folder_path, item)
+                if os.path.isdir(item_path):
+                    # Check if this directory contains image files
+                    image_files = glob.glob(os.path.join(item_path, "*.png")) + \
+                                 glob.glob(os.path.join(item_path, "*.jpg")) + \
+                                 glob.glob(os.path.join(item_path, "*.tif"))
+                    if image_files:
+                        subdirs.append(item_path)
+            
+            if subdirs:
+                self.selected_folders = subdirs
+                self.update_folders_list()
+                self.check_and_enable_analysis()
+                QMessageBox.information(self, 'Folders Selected', 
+                                      f'Found {len(subdirs)} soil core folders with image files.')
+            else:
+                QMessageBox.warning(self, 'No Valid Folders', 
+                                  'No subdirectories with image files found in the selected directory.')
+
+    def update_folders_list(self):
+        """Update the folders list display"""
+        self.folders_list.clear()
+        for folder in self.selected_folders:
+            folder_name = os.path.basename(folder)
+            self.folders_list.addItem(f"{folder_name} ({folder})")
+        
+        # Enable/disable buttons based on list state
+        self.remove_folder_btn.setEnabled(len(self.selected_folders) > 0)
+        self.clear_all_btn.setEnabled(len(self.selected_folders) > 0)
+
+    def check_and_enable_analysis(self):
+        """Check if we have valid folders and enable analysis button"""
+        if self.selected_folders:
+            self.analyze_btn.setEnabled(True)
+        else:
+            self.analyze_btn.setEnabled(False)
 
     def load_nifti(self):
         file_path, _ = QFileDialog.getOpenFileName(self, 'Open NIfTI file', '', 'NIfTI Files (*.nii *.nii.gz)')
@@ -295,26 +384,10 @@ class NiftiViewer(QWidget):
         except Exception as e:
             QMessageBox.critical(self, 'Save Error', f'Error saving images: {str(e)}')
 
-    def select_image_folder(self):
-        """Select a folder containing 2D image files"""
-        folder_path = QFileDialog.getExistingDirectory(self, 'Select Image Folder')
-        if folder_path:
-            self.image_folder_path = folder_path
-            # Check if folder contains image files
-            image_files = glob.glob(os.path.join(folder_path, "*.png")) + \
-                         glob.glob(os.path.join(folder_path, "*.jpg")) + \
-                         glob.glob(os.path.join(folder_path, "*.tif"))
-            if image_files:
-                self.analyze_btn.setEnabled(True)
-                QMessageBox.information(self, 'Folder Selected', 
-                                      f'Selected folder: {folder_path}\nFound {len(image_files)} image files.')
-            else:
-                QMessageBox.warning(self, 'No Images', 'No image files found in the selected folder.')
-
     def analyze_root_topology(self):
         """Analyze root topology from 2D images and generate CSV with bar plot"""
-        if not hasattr(self, 'image_folder_path'):
-            QMessageBox.warning(self, 'No Folder', 'Please select an image folder first.')
+        if not self.selected_folders:
+            QMessageBox.warning(self, 'No Folders', 'Please select at least one folder first.')
             return
         
         try:
@@ -327,38 +400,148 @@ class NiftiViewer(QWidget):
             pixels_per_range = self.pixel_range_spin.value()
             num_ranges = self.num_ranges_spin.value()
             
-            # Process images using utils function
-            all_features = process_images_for_topology(
-                self.image_folder_path, pixels_per_range, num_ranges
-            )
+            # Process each folder (soil core)
+            all_core_features = []
+            core_summaries = []
+            saved_files = []  # Track saved files for confirmation
             
-            if all_features:
-                # Generate CSV
-                output_csv = os.path.join(self.image_folder_path, "root_length_by_diameter.csv")
-                combined_features = pd.concat(all_features, ignore_index=True)
-                combined_features.to_csv(output_csv, index=False)
+            for folder_path in self.selected_folders:
+                core_name = os.path.basename(folder_path)
+                print(f"Processing soil core: {core_name}")
                 
-                # Create and display bar plot using utils function
-                plot_path = os.path.join(self.image_folder_path, "root_topology_plot.png")
-                fig, ax = create_root_topology_plot(combined_features, pixels_per_range, num_ranges, plot_path)
+                # Process images for this core
+                all_features = process_images_for_topology(
+                    folder_path, pixels_per_range, num_ranges
+                )
                 
-                # Show the plot in a new window
-                plot_dialog = QDialog(self)
-                plot_dialog.setWindowTitle('Root Topology Analysis Results')
-                plot_dialog.resize(800, 600)
-                
-                from PyQt5.QtWidgets import QVBoxLayout
-                plot_layout = QVBoxLayout()
-                plot_canvas = FigureCanvas(fig)
-                plot_layout.addWidget(plot_canvas)
-                plot_dialog.setLayout(plot_layout)
-                
-                plot_dialog.show()
-                
-                QMessageBox.information(self, 'Analysis Complete', 
-                                      f'Root topology analysis complete!\nCSV saved to: {output_csv}')
+                if all_features:
+                    # Generate individual CSV for this core - save in parent directory
+                    parent_dir = os.path.dirname(folder_path)
+                    core_csv_path = os.path.join(parent_dir, f"{core_name}_root_length_by_diameter.csv")
+                    import pandas as pd
+                    combined_features = pd.concat(all_features, ignore_index=True)
+                    
+                    try:
+                        combined_features.to_csv(core_csv_path, index=False)
+                        saved_files.append(core_csv_path)
+                        print(f"✓ Saved individual CSV: {core_csv_path}")
+                    except Exception as csv_error:
+                        print(f"⚠ Error saving CSV for {core_name}: {csv_error}")
+                        # Try to save in a different location
+                        try:
+                            backup_path = os.path.join(os.path.dirname(parent_dir), f"{core_name}_root_length_by_diameter.csv")
+                            combined_features.to_csv(backup_path, index=False)
+                            saved_files.append(backup_path)
+                            print(f"✓ Saved backup CSV: {backup_path}")
+                        except Exception as backup_error:
+                            print(f"⚠ Failed to save backup CSV for {core_name}: {backup_error}")
+                    
+                    # Create summary for this core
+                    range_columns = [col for col in combined_features.columns if 'Root Length Diameter Range' in col]
+                    core_summary = combined_features[range_columns].sum()
+                    core_summary_dict = {
+                        'soil_core': core_name,
+                        'total_images': len(all_features)
+                    }
+                    core_summary_dict.update(core_summary.to_dict())
+                    core_summaries.append(core_summary_dict)
+                    
+                    all_core_features.extend(all_features)
+                    
+                    print(f"✓ Processed {core_name}: {len(all_features)} images")
+                else:
+                    print(f"⚠ No valid segments found in {core_name}")
+            
+            if all_core_features:
+                # Generate summary CSV with all cores
+                if len(self.selected_folders) > 1:
+                    # Create summary directory in the first folder's parent
+                    parent_dir = os.path.dirname(self.selected_folders[0])
+                    summary_csv_path = os.path.join(parent_dir, "soil_cores_summary.csv")
+                    
+                    try:
+                        summary_df = pd.DataFrame(core_summaries)
+                        summary_df.to_csv(summary_csv_path, index=False)
+                        saved_files.append(summary_csv_path)
+                        print(f"✓ Saved summary CSV: {summary_csv_path}")
+                    except Exception as summary_error:
+                        print(f"⚠ Error saving summary CSV: {summary_error}")
+                    
+                    # Create aggregated plot
+                    combined_features = pd.concat(all_core_features, ignore_index=True)
+                    plot_path = os.path.join(parent_dir, "soil_cores_aggregated_plot.png")
+                    try:
+                        fig, ax = create_root_topology_plot(combined_features, pixels_per_range, num_ranges, plot_path)
+                        saved_files.append(plot_path)
+                        print(f"✓ Saved aggregated plot: {plot_path}")
+                    except Exception as plot_error:
+                        print(f"⚠ Error saving aggregated plot: {plot_error}")
+                    
+                    # Show the plot in a new window
+                    try:
+                        plot_dialog = QDialog(self)
+                        plot_dialog.setWindowTitle('Soil Cores Root Topology Analysis Results')
+                        plot_dialog.resize(800, 600)
+                        
+                        from PyQt5.QtWidgets import QVBoxLayout
+                        plot_layout = QVBoxLayout()
+                        plot_canvas = FigureCanvas(fig)
+                        plot_layout.addWidget(plot_canvas)
+                        plot_dialog.setLayout(plot_layout)
+                        
+                        plot_dialog.show()
+                    except Exception as dialog_error:
+                        print(f"⚠ Error showing plot dialog: {dialog_error}")
+                    
+                    # Create detailed completion message
+                    completion_message = f'Root topology analysis complete!\n\n'
+                    completion_message += f'Files saved:\n'
+                    for file_path in saved_files:
+                        completion_message += f'• {os.path.basename(file_path)}\n'
+                    
+                    QMessageBox.information(self, 'Analysis Complete', completion_message)
+                else:
+                    # Single folder case - use existing logic
+                    folder_path = self.selected_folders[0]
+                    output_csv = os.path.join(folder_path, "root_length_by_diameter.csv")
+                    combined_features = pd.concat(all_core_features, ignore_index=True)
+                    
+                    try:
+                        combined_features.to_csv(output_csv, index=False)
+                        saved_files.append(output_csv)
+                        print(f"✓ Saved single CSV: {output_csv}")
+                    except Exception as csv_error:
+                        print(f"⚠ Error saving single CSV: {csv_error}")
+                    
+                    # Create and display bar plot using utils function
+                    plot_path = os.path.join(folder_path, "root_topology_plot.png")
+                    try:
+                        fig, ax = create_root_topology_plot(combined_features, pixels_per_range, num_ranges, plot_path)
+                        saved_files.append(plot_path)
+                        print(f"✓ Saved single plot: {plot_path}")
+                    except Exception as plot_error:
+                        print(f"⚠ Error saving single plot: {plot_error}")
+                    
+                    # Show the plot in a new window
+                    try:
+                        plot_dialog = QDialog(self)
+                        plot_dialog.setWindowTitle('Root Topology Analysis Results')
+                        plot_dialog.resize(800, 600)
+                        
+                        from PyQt5.QtWidgets import QVBoxLayout
+                        plot_layout = QVBoxLayout()
+                        plot_canvas = FigureCanvas(fig)
+                        plot_layout.addWidget(plot_canvas)
+                        plot_dialog.setLayout(plot_layout)
+                        
+                        plot_dialog.show()
+                    except Exception as dialog_error:
+                        print(f"⚠ Error showing plot dialog: {dialog_error}")
+                    
+                    QMessageBox.information(self, 'Analysis Complete', 
+                                          f'Root topology analysis complete!\nCSV saved to: {output_csv}')
             else:
-                QMessageBox.warning(self, 'No Data', 'No valid root segments found in the images.')
+                QMessageBox.warning(self, 'No Data', 'No valid root segments found in any of the selected folders.')
                 
         except Exception as e:
             QMessageBox.critical(self, 'Analysis Error', f'Error during analysis: {str(e)}')
@@ -416,6 +599,22 @@ class NiftiViewer(QWidget):
             # Re-enable the run button
             self.run_btn.setEnabled(True)
             self.run_btn.setText('Run Segmentation')
+
+    def remove_selected_folder(self):
+        """Remove the selected folder from the list"""
+        selected_indexes = self.folders_list.selectedIndexes()
+        if selected_indexes:
+            selected_folder = self.folders_list.item(selected_indexes[0].row()).text()
+            folder_path = selected_folder.split('(')[1].strip(')')
+            self.selected_folders.remove(folder_path)
+            self.update_folders_list()
+            self.check_and_enable_analysis()
+
+    def clear_all_folders(self):
+        """Clear all folders from the list"""
+        self.selected_folders = []
+        self.update_folders_list()
+        self.check_and_enable_analysis()
 
 def main():
     app = QApplication(sys.argv)
