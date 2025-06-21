@@ -33,6 +33,7 @@ from monai.data import (
 import torch
 import json
 from datetime import datetime
+from utils import load_model, get_test_transforms, count_parameters
 
 def main():
     directory = 'models'
@@ -60,21 +61,8 @@ def main():
     with open(metadata_file, 'w') as f:
         json.dump(metadata, f, indent=4)
 
-    ### My transforms
-    test_transforms = Compose(
-        [
-            LoadImaged(keys=["image"]),
-            EnsureChannelFirstd(keys=["image"]),
-            Orientationd(keys=["image"], axcodes="RAS"),
-            Spacingd(
-                keys=["image"],
-                pixdim=(1.5, 1.5, 2.0),
-                mode=("bilinear"),
-            ),
-            ScaleIntensityRanged(keys=["image"], a_min=-175, a_max=250, b_min=0.0, b_max=1.0, clip=True),
-            CropForegroundd(keys=["image"], source_key="image", allow_smaller=True),
-        ]
-    )
+    # Use shared transforms from utils
+    test_transforms = get_test_transforms()
 
     # rootpath = "E:\monailabel\datasets"
     rootpath = os.path.join("..","datasets")
@@ -95,93 +83,8 @@ def main():
 
     print(corenames)
 
-    # Apply model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # network architecture: unet, unetr, dynunet, or segresnet
-    if net_type == 'unet':
-        class UNetWithSigmoid(UNet):
-            def forward(self, x):
-                x = super().forward(x)
-                # x = torch.sigmoid(x)
-                return x
-
-        # Initialize the UNet model with sigmoid
-        model = UNetWithSigmoid(
-            spatial_dims=3,  # Use `spatial_dims` instead of `dimensions`
-            in_channels=1,
-            out_channels=1,  # For binary segmentation
-            channels=(16, 32, 64, 128, 256),  # Filters at each level
-            strides=(2, 2, 2, 2),  # Downsampling factors
-            num_res_units=2,  # Number of residual units
-            norm='instance',  # Use instance normalization
-        ).to(device)
-
-    elif net_type == 'unetr':
-        class UNETRWithSigmoid(UNETR):
-            def forward(self, x):
-                x = super().forward(x)
-                # x = torch.sigmoid(x)
-                return x
-
-        model = UNETRWithSigmoid(
-            in_channels=1,
-            out_channels=1,
-            img_size=(96, 96, 16),
-            feature_size=16,
-            hidden_size=768,
-            mlp_dim= 3072, 
-            num_heads=12, # default 12
-            pos_embed="perceptron",
-            norm_name="instance",
-            res_block=True,
-            dropout_rate=0.2,
-        ).to(device)
-        
-    elif net_type == 'dynunet':
-        class DynUNetWithSigmoid(DynUNet):
-            def forward(self, x):
-                x = super().forward(x)
-                # x = torch.sigmoid(x)
-                return x
-
-        # Initialize the DynUNet model with sigmoid
-        model = DynUNetWithSigmoid(
-            spatial_dims=3,
-            in_channels=1,
-            out_channels=1,
-            kernel_size=[3, 3, 3, 3, 3],
-            strides=[1, 2, 2, 2, 2],
-            upsample_kernel_size=[2, 2, 2, 2],
-            filters=(16, 32, 64, 128, 256),
-            norm_name="instance",
-        ).to(device)
-        
-    elif net_type == 'segresnet':
-        class SegResNetWithSigmoid(SegResNet):
-            def forward(self, x):
-                x = super().forward(x)
-                # x = torch.sigmoid(x)
-                return x
-
-        # Initialize the SegResNet model with sigmoid
-        model = SegResNetWithSigmoid(
-            spatial_dims=3,
-            in_channels=1,
-            out_channels=1,
-            init_filters=16,
-            blocks_down=[1, 2, 2, 4],
-            blocks_up=[1, 1, 1],
-            norm="instance",
-        ).to(device)
-        
-    else:
-        assert False, "Selected network does not exist"
-
-    model.load_state_dict(torch.load(os.path.join(directory,  "best_metric_model" + model_name + ".pth")))
-
-    def count_parameters(model):
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # Load model using utils function
+    model, device = load_model(model_name, directory)
 
     print(f"Number of parameters: {count_parameters(model)}")
 
