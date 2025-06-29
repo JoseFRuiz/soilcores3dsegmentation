@@ -79,7 +79,6 @@ def create_model(net_type, device):
             hidden_size=768,
             mlp_dim=3072,
             num_heads=12,
-            pos_embed="perceptron",
             norm_name="instance",
             res_block=True,
             dropout_rate=0.2,
@@ -137,7 +136,36 @@ def load_model(model_name, models_dir='models'):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
     
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    # Load state dict
+    state_dict = torch.load(model_path, map_location=device)
+    
+    # Try to load with strict=False to handle missing keys
+    try:
+        model.load_state_dict(state_dict, strict=True)
+        print(f"✓ Model loaded successfully with strict=True")
+    except RuntimeError as e:
+        print(f"⚠ Strict loading failed, trying with strict=False...")
+        print(f"Error: {e}")
+        
+        # Try with strict=False
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        
+        if missing_keys:
+            print(f"⚠ Missing keys: {len(missing_keys)}")
+            for key in missing_keys[:5]:  # Show first 5 missing keys
+                print(f"  - {key}")
+            if len(missing_keys) > 5:
+                print(f"  ... and {len(missing_keys) - 5} more")
+        
+        if unexpected_keys:
+            print(f"⚠ Unexpected keys: {len(unexpected_keys)}")
+            for key in unexpected_keys[:5]:  # Show first 5 unexpected keys
+                print(f"  - {key}")
+            if len(unexpected_keys) > 5:
+                print(f"  ... and {len(unexpected_keys) - 5} more")
+        
+        print(f"✓ Model loaded with {len(missing_keys)} missing keys and {len(unexpected_keys)} unexpected keys")
+    
     model.eval()
     
     return model, device

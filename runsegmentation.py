@@ -39,9 +39,9 @@ def main():
     directory = 'models'
 
     # Model configuration
-    net_type = 'UNet'  # network architecture: UNet, UNETR, DynUNet, or SegResNet
+    net_type = 'UNETR'  # network architecture: UNet, UNETR, DynUNet, or SegResNet
     net_type = net_type.lower()
-    model_name = 'unet_dataset_2_default'
+    model_name = 'dataset_2adamw_100k_num_heads_2'
     # ['dataset_2adamw_100k_num_heads_2', 'dynunet_dataset_2_100k', 'segresnet_dataset_2_default', 'unet_dataset_2_default'
 #  'unet_dataset_2_100k']
     threshold_value = None

@@ -1,0 +1,7 @@
+{
+    "model_name": "dataset_2adamw_100k_num_heads_2",
+    "network_type": "unetr",
+    "threshold": null,
+    "timestamp": "2025-06-29 16:24:10",
+    "device": "cuda"
+}
