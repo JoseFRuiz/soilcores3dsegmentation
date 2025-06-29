@@ -503,7 +503,7 @@ class NiftiViewer(QWidget):
                 else:
                     # Single folder case - use existing logic
                     folder_path = self.selected_folders[0]
-                    output_csv = os.path.join(folder_path, "root_length_by_diameter.csv")
+                    output_csv = os.path.join(folder_path, "..", f"{core_name}_root_length_by_diameter.csv")
                     combined_features = pd.concat(all_core_features, ignore_index=True)
                     
                     try:
@@ -514,7 +514,7 @@ class NiftiViewer(QWidget):
                         print(f"⚠ Error saving single CSV: {csv_error}")
                     
                     # Create and display bar plot using utils function
-                    plot_path = os.path.join(folder_path, "root_topology_plot.png")
+                    plot_path = os.path.join(folder_path, "..", f"{core_name}_root_topology_plot.png")
                     try:
                         fig, ax = create_root_topology_plot(combined_features, pixels_per_range, num_ranges, plot_path)
                         saved_files.append(plot_path)
