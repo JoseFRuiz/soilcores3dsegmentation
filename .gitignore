@@ -8,9 +8,11 @@ outputs/*.nii.gz
 *.nii
 outputs/*.nii
 
-# Images
+# Images (excluding readme_figs)
 *.png
 images/*.png
+!readme_figs/*.png
+!readme_figs/**/*.png
 
 # Python
 __pycache__/
