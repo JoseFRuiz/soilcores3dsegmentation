@@ -22,6 +22,9 @@ from monai.transforms import (
 )
 from monai.inferers import sliding_window_inference
 from monai.networks.nets import UNETR, UNet, DynUNet, SegResNet
+from PIL import Image
+from typing import List, Optional, Dict, Any
+from scipy.stats import pearsonr, spearmanr
 
 # Model configuration mapping
 MODEL_CONFIGS = {
@@ -449,3 +452,293 @@ def create_root_topology_plot(combined_features, pixels_per_range, num_ranges, s
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
     
     return fig, ax 
+
+# -----------------------------
+# New helpers for CLI pipeline
+# -----------------------------
+
+def _derive_base_name_from_path(path: str) -> str:
+    """Derive a clean base name from a file path, handling .nii and .nii.gz."""
+    base_name = os.path.splitext(os.path.basename(path))[0]
+    if base_name.endswith('.nii'):
+        base_name = base_name[:-4]
+    return base_name
+
+def save_thresholded_slices_from_nifti(
+    nifti_path: str,
+    output_root_dir: str,
+    lower_percent: float = 0.0,
+    upper_percent: float = 100.0,
+) -> str:
+    """Convert a NIfTI volume to thresholded binary PNG slices.
+
+    Thresholds are given in percent (0-100) of the volume min-max range.
+    Returns the folder path where the PNG slices were saved.
+    """
+    nii_img = nib.load(nifti_path)
+    data = nii_img.get_fdata()
+
+    data_min = float(data.min())
+    data_max = float(data.max())
+
+    lower_val = data_min + (data_max - data_min) * (lower_percent / 100.0)
+    upper_val = data_min + (data_max - data_min) * (upper_percent / 100.0)
+
+    thresholded_data = np.copy(data)
+    thresholded_data[thresholded_data < lower_val] = 0
+    thresholded_data[thresholded_data > upper_val] = 0
+
+    binary_data = np.where(thresholded_data > 0, 1, 0)
+
+    base_name = _derive_base_name_from_path(nifti_path)
+    dataset_dir = os.path.join(output_root_dir, base_name)
+    os.makedirs(dataset_dir, exist_ok=True)
+
+    # Align with GUI behavior
+    data_to_save = np.swapaxes(binary_data, 0, 2)
+
+    for i in range(data_to_save.shape[1]):
+        slice_data = data_to_save[:, i, :]
+        slice_image = Image.fromarray(np.uint8(slice_data * 255))
+        slice_image.save(os.path.join(dataset_dir, f"{base_name}_{i:03}.png"))
+
+    return dataset_dir
+
+def segment_multiple_files(
+    input_files: List[str],
+    model_name: str,
+    output_dir: Optional[str] = None,
+    threshold_value: Optional[float] = None,
+) -> List[str]:
+    """Run segmentation for multiple NIfTI files, returning list of output paths."""
+    output_paths: List[str] = []
+    for input_path in input_files:
+        out_path = segment_single_file(
+            input_file=input_path,
+            model_name=model_name,
+            output_dir=output_dir,
+            threshold_value=threshold_value,
+        )
+        output_paths.append(out_path)
+    return output_paths
+
+def analyze_core_folders(
+    selected_folders: List[str],
+    pixels_per_range: int,
+    num_ranges: int,
+) -> Dict[str, Any]:
+    """Analyze one or many core folders and generate CSVs/plots like the GUI flow.
+
+    Returns a dict with keys:
+      - per_core_csvs: list[str]
+      - aggregated_csv: str | None
+      - aggregated_plot: str | None
+    """
+    all_core_features: List[pd.DataFrame] = []
+    core_summaries: List[Dict[str, Any]] = []
+    saved_files: Dict[str, Any] = {
+        "per_core_csvs": [],
+        "aggregated_csv": None,
+        "aggregated_plot": None,
+    }
+
+    for folder_path in selected_folders:
+        core_name = os.path.basename(folder_path)
+        all_features = process_images_for_topology(folder_path, pixels_per_range, num_ranges)
+
+        if all_features:
+            parent_dir = os.path.dirname(folder_path)
+            core_csv_path = os.path.join(parent_dir, f"{core_name}_root_length_by_diameter.csv")
+            combined_features = pd.concat(all_features, ignore_index=True)
+
+            try:
+                combined_features.to_csv(core_csv_path, index=False)
+                saved_files["per_core_csvs"].append(core_csv_path)
+            except Exception:
+                backup_path = os.path.join(os.path.dirname(parent_dir), f"{core_name}_root_length_by_diameter.csv")
+                combined_features.to_csv(backup_path, index=False)
+                saved_files["per_core_csvs"].append(backup_path)
+
+            range_columns = [col for col in combined_features.columns if 'Root Length Diameter Range' in col]
+            core_summary = combined_features[range_columns].sum()
+            core_summary_dict: Dict[str, Any] = {"soil_core": core_name, "total_images": len(all_features)}
+            core_summary_dict.update(core_summary.to_dict())
+            core_summaries.append(core_summary_dict)
+
+            all_core_features.extend(all_features)
+
+    if core_summaries:
+        parent_dir = os.path.dirname(selected_folders[0])
+        summary_csv_path = os.path.join(parent_dir, "soil_cores_summary.csv")
+        summary_df = pd.DataFrame(core_summaries)
+        summary_df.to_csv(summary_csv_path, index=False)
+        saved_files["aggregated_csv"] = summary_csv_path
+
+        # Only create aggregated plot when analyzing multiple cores
+        if len(selected_folders) > 1 and all_core_features:
+            combined_features = pd.concat(all_core_features, ignore_index=True)
+            plot_path = os.path.join(parent_dir, "soil_cores_aggregated_plot.png")
+            fig, _ = create_root_topology_plot(combined_features, pixels_per_range, num_ranges, plot_path)
+            try:
+                import matplotlib.pyplot as plt
+                plt.close(fig)
+            except Exception:
+                pass
+            saved_files["aggregated_plot"] = plot_path
+
+    return saved_files
+
+def collect_nifti_files_from_dir(nifti_dir: str) -> List[str]:
+    """Collect .nii and .nii.gz files from a directory (non-recursive)."""
+    paths: List[str] = []
+    for ext in ("*.nii", "*.nii.gz"):
+        paths.extend(glob.glob(os.path.join(nifti_dir, ext)))
+    return sorted(paths)
+
+def find_core_folders_in_parent(parent_dir: str) -> List[str]:
+    """Find subfolders containing PNG/JPG/TIF images (soil cores)."""
+    subdirs: List[str] = []
+    for item in os.listdir(parent_dir):
+        item_path = os.path.join(parent_dir, item)
+        if os.path.isdir(item_path):
+            image_files = glob.glob(os.path.join(item_path, "*.png")) + \
+                          glob.glob(os.path.join(item_path, "*.jpg")) + \
+                          glob.glob(os.path.join(item_path, "*.tif"))
+            if image_files:
+                subdirs.append(item_path)
+    return subdirs
+
+def run_pipeline_for_niftis(
+    nifti_files: List[str],
+    model_name: str,
+    lower_percent: float,
+    upper_percent: float,
+    pixels_per_range: int,
+    num_ranges: int,
+    outputs_dir: str = "outputs",
+) -> Dict[str, Any]:
+    """High-level end-to-end pipeline: segment → save slices → analyze.
+
+    Returns a dict summarizing output locations with keys:
+      - nifti_outputs: list[str]
+      - png_root: str
+      - analysis_outputs: dict (from analyze_core_folders)
+    """
+    nifti_outputs = segment_multiple_files(
+        nifti_files, model_name=model_name, output_dir=None, threshold_value=None
+    )
+
+    net_type, _ = MODEL_CONFIGS[model_name]
+    png_root = os.path.join(outputs_dir, f"{net_type}_{model_name}_png")
+    os.makedirs(png_root, exist_ok=True)
+
+    generated_folders: List[str] = []
+    for out_path in nifti_outputs:
+        folder = save_thresholded_slices_from_nifti(
+            nifti_path=out_path,
+            output_root_dir=png_root,
+            lower_percent=lower_percent,
+            upper_percent=upper_percent,
+        )
+        generated_folders.append(folder)
+
+    analysis_outputs = analyze_core_folders(
+        selected_folders=generated_folders,
+        pixels_per_range=pixels_per_range,
+        num_ranges=num_ranges,
+    )
+
+    return {
+        "nifti_outputs": nifti_outputs,
+        "png_root": png_root,
+        "analysis_outputs": analysis_outputs,
+    }
+
+# -----------------------------
+# Correlation helpers (GT vs summary)
+# -----------------------------
+
+def _map_gt_to_prediction_ranges() -> Dict[str, str]:
+    gt_columns = [
+        'Sum of 0<.L.<=1.000000',
+        'Sum of 1.0000000<.L.<=2.0000000',
+        'Sum of 2.0000000<.L.<=3.0000000',
+        'Sum of 3.0000000<.L.<=4.0000000',
+        'Sum of .L.>4.0000000',
+    ]
+    pred_columns = [
+        'Root Length Diameter Range 1 (px)',
+        'Root Length Diameter Range 2 (px)',
+        'Root Length Diameter Range 3 (px)',
+        'Root Length Diameter Range 4 (px)',
+        'Root Length Diameter Range 5 (px)',
+    ]
+    return dict(zip(gt_columns, pred_columns))
+
+def _safe_corr(x: np.ndarray, y: np.ndarray, method: str) -> float:
+    if np.var(x) == 0 or np.var(y) == 0:
+        return 0.0
+    try:
+        if method == 'pearson':
+            r, _ = pearsonr(x, y)
+        else:
+            r, _ = spearmanr(x, y)
+        return float(r)
+    except Exception:
+        return 0.0
+
+def compute_correlation_matrix(gt_df: pd.DataFrame, pred_df: pd.DataFrame, method: str) -> pd.DataFrame:
+    mapping = _map_gt_to_prediction_ranges()
+    gt_cols = list(mapping.keys()) + ['Sum of .L.>0.0000000']
+    pred_cols = list(mapping.values()) + ['total_images']
+
+    # Ensure only common cores are used
+    if 'corename' in gt_df.columns and 'soil_core' not in gt_df.columns:
+        gt_df = gt_df.rename(columns={'corename': 'soil_core'})
+    common = sorted(set(gt_df['soil_core']).intersection(set(pred_df['soil_core'])))
+    gt_sub = gt_df[gt_df['soil_core'].isin(common)].sort_values('soil_core').reset_index(drop=True)
+    pred_sub = pred_df[pred_df['soil_core'].isin(common)].sort_values('soil_core').reset_index(drop=True)
+
+    mat = np.zeros((len(gt_cols), len(pred_cols)))
+    for i, gcol in enumerate(gt_cols):
+        for j, pcol in enumerate(pred_cols):
+            gx = gt_sub[gcol].values if gcol in gt_sub.columns else np.zeros(len(gt_sub))
+            px = pred_sub[pcol].values if pcol in pred_sub.columns else np.zeros(len(pred_sub))
+            mat[i, j] = _safe_corr(gx, px, method)
+
+    return pd.DataFrame(mat, index=gt_cols, columns=pred_cols)
+
+def load_gt_and_summary(gt_csv_path: str, summary_csv_path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    gt_df = pd.read_csv(gt_csv_path)
+    pred_df = pd.read_csv(summary_csv_path)
+    if 'corename' in gt_df.columns and 'soil_core' not in gt_df.columns:
+        gt_df = gt_df.rename(columns={'corename': 'soil_core'})
+    return gt_df, pred_df
+
+def _sanitize_thresh(val: float) -> str:
+    if abs(val - round(val)) < 1e-6:
+        return str(int(round(val)))
+    return f"{val:.2f}".rstrip('0').rstrip('.')
+
+def compute_and_save_correlations(
+    gt_csv_path: str,
+    summary_csv_path: str,
+    save_dir: str,
+    lower_percent: float,
+    upper_percent: float,
+) -> Dict[str, str]:
+    os.makedirs(save_dir, exist_ok=True)
+    gt_df, pred_df = load_gt_and_summary(gt_csv_path, summary_csv_path)
+
+    pearson_df = compute_correlation_matrix(gt_df, pred_df, method='pearson')
+    spearman_df = compute_correlation_matrix(gt_df, pred_df, method='spearman')
+
+    l = _sanitize_thresh(lower_percent)
+    u = _sanitize_thresh(upper_percent)
+    pearson_path = os.path.join(save_dir, f"correlation_pearson_l{l}_u{u}.csv")
+    spearman_path = os.path.join(save_dir, f"correlation_spearman_l{l}_u{u}.csv")
+
+    pearson_df.to_csv(pearson_path)
+    spearman_df.to_csv(spearman_path)
+
+    return {"pearson": pearson_path, "spearman": spearman_path}
