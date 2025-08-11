@@ -58,7 +58,9 @@ def main():
         "D:\\monailabel\\datasets\\soilcores\\test\\S3603.nii.gz",
     ]
     
-    model = "dataset_2adamw_100k_num_heads_2"
+    model = "unet_dataset_2_100k"
+    # Models: "dataset_2adamw_100k_num_heads_2" "unet_dataset_2_default" "unet_dataset_2_100k"
+    # "segresnet_dataset_2_default" "dynunet_dataset_2_100k"
     upper = 100  # Keep upper threshold constant
     pixels_per_range = 2
     num_ranges = 5
@@ -66,8 +68,9 @@ def main():
     gt_csv = "D:\\monailabel\\soilcores3dsegmentation\\gt\\CoresGT.csv"  # Optional: set to None if not needed
     
     # Threshold values to iterate through
-    lower_values = [0, 20, 40, 60, 80]
-    
+    lower_values = [0] # 0, 20, 40, 60, 80
+    upper_values = [80, 60, 40, 20]
+
     print("Soil Core Threshold Iteration Script")
     print("=" * 50)
     print(f"Model: {model}")
@@ -78,6 +81,7 @@ def main():
     if gt_csv:
         print(f"Ground truth CSV: {gt_csv}")
     print(f"Lower threshold values to test: {lower_values}")
+    print(f"Upper threshold values to test: {upper_values}")
     print(f"NIfTI files: {nifti_files}")
     print()
     
@@ -92,26 +96,28 @@ def main():
     
     # Iterate through threshold values
     for lower in lower_values:
-        success = run_cli_with_threshold(
-            lower=lower,
-            upper=upper,
-            nifti_files=nifti_files,
-            model=model,
-            pixels_per_range=pixels_per_range,
-            num_ranges=num_ranges,
-            outputs_dir=outputs_dir,
-            gt_csv=gt_csv
-        )
+        for upper in upper_values:
+            print(f"Running with lower={lower}, upper={upper}")
+            success = run_cli_with_threshold(
+                lower=lower,
+                upper=upper,
+                nifti_files=nifti_files,
+                model=model,
+                pixels_per_range=pixels_per_range,
+                num_ranges=num_ranges,
+                outputs_dir=outputs_dir,
+                gt_csv=gt_csv
+            )
         
-        results.append({
-            'lower': lower,
-            'upper': upper,
-            'success': success
-        })
-        
-        # Small delay between runs
-        import time
-        time.sleep(1)
+            results.append({
+                'lower': lower,
+                'upper': upper,
+                'success': success
+            })
+            
+            # Small delay between runs
+            import time
+            time.sleep(1)
     
     # Summary
     print(f"\n{'='*60}")

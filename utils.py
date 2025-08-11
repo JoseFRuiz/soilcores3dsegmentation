@@ -145,29 +145,29 @@ def load_model(model_name, models_dir='models'):
     # Try to load with strict=False to handle missing keys
     try:
         model.load_state_dict(state_dict, strict=True)
-        print(f"✓ Model loaded successfully with strict=True")
+        print(f"SUCCESS: Model loaded successfully with strict=True")
     except RuntimeError as e:
-        print(f"⚠ Strict loading failed, trying with strict=False...")
+        print(f"WARNING: Strict loading failed, trying with strict=False...")
         print(f"Error: {e}")
         
         # Try with strict=False
         missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
         
         if missing_keys:
-            print(f"⚠ Missing keys: {len(missing_keys)}")
+            print(f"WARNING: Missing keys: {len(missing_keys)}")
             for key in missing_keys[:5]:  # Show first 5 missing keys
                 print(f"  - {key}")
             if len(missing_keys) > 5:
                 print(f"  ... and {len(missing_keys) - 5} more")
         
         if unexpected_keys:
-            print(f"⚠ Unexpected keys: {len(unexpected_keys)}")
+            print(f"WARNING: Unexpected keys: {len(unexpected_keys)}")
             for key in unexpected_keys[:5]:  # Show first 5 unexpected keys
                 print(f"  - {key}")
             if len(unexpected_keys) > 5:
                 print(f"  ... and {len(unexpected_keys) - 5} more")
         
-        print(f"✓ Model loaded with {len(missing_keys)} missing keys and {len(unexpected_keys)} unexpected keys")
+        print(f"SUCCESS: Model loaded with {len(missing_keys)} missing keys and {len(unexpected_keys)} unexpected keys")
     
     model.eval()
     
