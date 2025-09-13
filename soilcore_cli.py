@@ -1,3 +1,8 @@
+# Example usage:
+# python soilcore_cli.py --nifti-dir D:\monailabel\datasets\soilcores\test --model unet_dataset_2_default --lower 0.0 --upper 100.0 --view horizontal --pixels-per-range 2 --num-ranges 5 --outputs-dir outputs --gt-csv D:\monailabel\soilcores3dsegmentation\gt\CoresGT.csv
+# python soilcore_cli.py --nifti-dir D:\monailabel\datasets\soilcores\test --model unet_dataset_2_default --lower 0.0 --upper 60.0 --view vertical --pixels-per-range 2 --num-ranges 5 --outputs-dir outputs --gt-csv D:\monailabel\soilcores3dsegmentation\gt\CoresGT.csv
+# python soilcore_cli.py --nifti-dir D:\monailabel\datasets\soilcores\test --model dataset_2adamw_100k_num_heads_2 --lower 0.0 --upper 60.0 --view vertical --pixels-per-range 2 --num-ranges 5 --outputs-dir outputs --gt-csv D:\monailabel\soilcores3dsegmentation\gt\CoresGT.csv
+
 import argparse
 import os
 import sys
@@ -37,6 +42,8 @@ def parse_args() -> argparse.Namespace:
     # Thresholding for slice export
     parser.add_argument("--lower", type=float, default=0.0, help="Lower threshold percentile (0-100) for slice export")
     parser.add_argument("--upper", type=float, default=100.0, help="Upper threshold percentile (0-100) for slice export")
+    parser.add_argument("--view", choices=["horizontal", "vertical"], default="horizontal", 
+                       help="Slicing direction for topology analysis: horizontal (6×6 cm slices) or vertical (30×6 cm slices)")
 
     # Topology analysis params
     parser.add_argument("--pixels-per-range", type=int, default=2, help="Pixels per diameter range")
@@ -74,6 +81,7 @@ def main() -> int:
             pixels_per_range=args.pixels_per_range,
             num_ranges=args.num_ranges,
             outputs_dir=args.outputs_dir,
+            view=args.view,
         )
 
         print("\nSegmentation outputs:")
@@ -93,6 +101,7 @@ def main() -> int:
                 save_dir=os.path.dirname(summary['analysis_outputs']['aggregated_csv']),
                 lower_percent=args.lower,
                 upper_percent=args.upper,
+                view=args.view,
             )
             print("Correlation matrices saved:")
             print(f" - Pearson: {corr_out['pearson']}")
@@ -113,25 +122,27 @@ def main() -> int:
         print("No core folders found to analyze.")
         return 1
 
-    analysis = analyze_core_folders(
+    analysis_outputs = analyze_core_folders(
         selected_folders=core_folders,
         pixels_per_range=args.pixels_per_range,
         num_ranges=args.num_ranges,
+        view=args.view,
     )
 
     print("\nAnalysis outputs:")
-    print(f" - per-core CSVs: {analysis.get('per_core_csvs', [])}")
-    print(f" - aggregated CSV: {analysis.get('aggregated_csv')}")
-    print(f" - aggregated plot: {analysis.get('aggregated_plot')}")
+    print(f" - per-core CSVs: {analysis_outputs.get('per_core_csvs', [])}")
+    print(f" - aggregated CSV: {analysis_outputs.get('aggregated_csv')}")
+    print(f" - aggregated plot: {analysis_outputs.get('aggregated_plot')}")
 
     # Optional correlations if summary exists
-    if args.gt_csv and analysis.get('aggregated_csv'):
+    if args.gt_csv and analysis_outputs.get('aggregated_csv'):
         corr_out = compute_and_save_correlations(
             gt_csv_path=args.gt_csv,
-            summary_csv_path=analysis['aggregated_csv'],
-            save_dir=os.path.dirname(analysis['aggregated_csv']),
+            summary_csv_path=analysis_outputs['aggregated_csv'],
+            save_dir=os.path.dirname(analysis_outputs['aggregated_csv']),
             lower_percent=args.lower,
             upper_percent=args.upper,
+            view=args.view,
         )
         print("Correlation matrices saved:")
         print(f" - Pearson: {corr_out['pearson']}")

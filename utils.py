@@ -469,10 +469,14 @@ def save_thresholded_slices_from_nifti(
     output_root_dir: str,
     lower_percent: float = 0.0,
     upper_percent: float = 100.0,
+    view: str = "horizontal",
 ) -> str:
     """Convert a NIfTI volume to thresholded binary PNG slices.
 
     Thresholds are given in percent (0-100) of the volume min-max range.
+    View parameter controls slicing direction:
+    - "horizontal": slice along the 6cm dimension (6×6 cm slices)
+    - "vertical": slice along the 30cm dimension (30×6 cm slices)
     Returns the folder path where the PNG slices were saved.
     """
     nii_img = nib.load(nifti_path)
@@ -494,13 +498,23 @@ def save_thresholded_slices_from_nifti(
     dataset_dir = os.path.join(output_root_dir, base_name)
     os.makedirs(dataset_dir, exist_ok=True)
 
-    # Align with GUI behavior
-    data_to_save = np.swapaxes(binary_data, 0, 2)
-
-    for i in range(data_to_save.shape[1]):
-        slice_data = data_to_save[:, i, :]
-        slice_image = Image.fromarray(np.uint8(slice_data * 255))
-        slice_image.save(os.path.join(dataset_dir, f"{base_name}_{i:03}.png"))
+    # Choose slicing direction based on view parameter
+    if view.lower() == "horizontal":
+        # Horizontal view: slice along the 6cm dimension (6×6 cm slices)
+        data_to_save = np.swapaxes(binary_data, 0, 2)
+        for i in range(data_to_save.shape[0]):
+            slice_data = data_to_save[i, :, :]
+            slice_image = Image.fromarray(np.uint8(slice_data * 255))
+            slice_image.save(os.path.join(dataset_dir, f"{base_name}_{i:03}.png"))
+    elif view.lower() == "vertical":
+        # Vertical view: slice along the 30cm dimension (30×6 cm slices)
+        data_to_save = np.swapaxes(binary_data, 0, 2)
+        for i in range(data_to_save.shape[1]):
+            slice_data = data_to_save[:, i, :]
+            slice_image = Image.fromarray(np.uint8(slice_data * 255))
+            slice_image.save(os.path.join(dataset_dir, f"{base_name}_{i:03}.png"))
+    else:
+        raise ValueError(f"Invalid view parameter: {view}. Must be 'horizontal' or 'vertical'.")
 
     return dataset_dir
 
@@ -522,10 +536,29 @@ def segment_multiple_files(
         output_paths.append(out_path)
     return output_paths
 
+def create_empty_features_dataframe(pixels_per_range: int, num_ranges: int) -> pd.DataFrame:
+    """Create an empty features DataFrame with NA values for when no segments are found.
+    
+    This should match exactly the structure created by extract_segment_features().
+    """
+    # Create range columns with the exact same naming convention as extract_segment_features
+    range_columns = [
+        f"Root Length Diameter Range {i+1} (px)"
+        for i in range(num_ranges)
+    ]
+    
+    # Create a single row with NA values for all range columns
+    empty_data = {col: [np.nan] for col in range_columns}
+    empty_data["folder"] = [""]
+    empty_data["file"] = [""]
+    
+    return pd.DataFrame(empty_data)
+
 def analyze_core_folders(
     selected_folders: List[str],
     pixels_per_range: int,
     num_ranges: int,
+    view: str = "horizontal",
 ) -> Dict[str, Any]:
     """Analyze one or many core folders and generate CSVs/plots like the GUI flow.
 
@@ -546,45 +579,59 @@ def analyze_core_folders(
         core_name = os.path.basename(folder_path)
         all_features = process_images_for_topology(folder_path, pixels_per_range, num_ranges)
 
+        parent_dir = os.path.dirname(folder_path)
+        core_csv_path = os.path.join(parent_dir, f"{core_name}_root_length_by_diameter_{view}.csv")
+        
         if all_features:
-            parent_dir = os.path.dirname(folder_path)
-            core_csv_path = os.path.join(parent_dir, f"{core_name}_root_length_by_diameter.csv")
+            # Normal case: segments found
             combined_features = pd.concat(all_features, ignore_index=True)
-
-            try:
-                combined_features.to_csv(core_csv_path, index=False)
-                saved_files["per_core_csvs"].append(core_csv_path)
-            except Exception:
-                backup_path = os.path.join(os.path.dirname(parent_dir), f"{core_name}_root_length_by_diameter.csv")
-                combined_features.to_csv(backup_path, index=False)
-                saved_files["per_core_csvs"].append(backup_path)
-
             range_columns = [col for col in combined_features.columns if 'Root Length Diameter Range' in col]
             core_summary = combined_features[range_columns].sum()
             core_summary_dict: Dict[str, Any] = {"soil_core": core_name, "total_images": len(all_features)}
             core_summary_dict.update(core_summary.to_dict())
-            core_summaries.append(core_summary_dict)
-
             all_core_features.extend(all_features)
+        else:
+            # No segments found: create empty DataFrame with NA values
+            print(f"WARNING: No segments found for {core_name}, generating CSV with NA values")
+            combined_features = create_empty_features_dataframe(pixels_per_range, num_ranges)
+            range_columns = [col for col in combined_features.columns if 'Root Length Diameter Range' in col]
+            core_summary = combined_features[range_columns].sum()  # This will be all NaN
+            core_summary_dict: Dict[str, Any] = {"soil_core": core_name, "total_images": 0}
+            core_summary_dict.update(core_summary.to_dict())
+            all_core_features.append(combined_features)
+
+        # Save CSV file regardless of whether segments were found
+        try:
+            combined_features.to_csv(core_csv_path, index=False)
+            saved_files["per_core_csvs"].append(core_csv_path)
+        except Exception:
+            backup_path = os.path.join(os.path.dirname(parent_dir), f"{core_name}_root_length_by_diameter_{view}.csv")
+            combined_features.to_csv(backup_path, index=False)
+            saved_files["per_core_csvs"].append(backup_path)
+
+        core_summaries.append(core_summary_dict)
 
     if core_summaries:
         parent_dir = os.path.dirname(selected_folders[0])
-        summary_csv_path = os.path.join(parent_dir, "soil_cores_summary.csv")
+        summary_csv_path = os.path.join(parent_dir, f"soil_cores_summary_{view}.csv")
         summary_df = pd.DataFrame(core_summaries)
         summary_df.to_csv(summary_csv_path, index=False)
         saved_files["aggregated_csv"] = summary_csv_path
 
-        # Only create aggregated plot when analyzing multiple cores
-        if len(selected_folders) > 1 and all_core_features:
-            combined_features = pd.concat(all_core_features, ignore_index=True)
-            plot_path = os.path.join(parent_dir, "soil_cores_aggregated_plot.png")
-            fig, _ = create_root_topology_plot(combined_features, pixels_per_range, num_ranges, plot_path)
-            try:
-                import matplotlib.pyplot as plt
-                plt.close(fig)
-            except Exception:
-                pass
-            saved_files["aggregated_plot"] = plot_path
+        # Only create aggregated plot when analyzing multiple cores and we have actual features
+        if len(selected_folders) > 1 and any(not df.empty and not df.isna().all().all() for df in all_core_features):
+            # Filter out completely empty DataFrames for plotting
+            valid_features = [df for df in all_core_features if not df.empty and not df.isna().all().all()]
+            if valid_features:
+                combined_features = pd.concat(valid_features, ignore_index=True)
+                plot_path = os.path.join(parent_dir, f"soil_cores_aggregated_plot_{view}.png")
+                fig, _ = create_root_topology_plot(combined_features, pixels_per_range, num_ranges, plot_path)
+                try:
+                    import matplotlib.pyplot as plt
+                    plt.close(fig)
+                except Exception:
+                    pass
+                saved_files["aggregated_plot"] = plot_path
 
     return saved_files
 
@@ -616,6 +663,7 @@ def run_pipeline_for_niftis(
     pixels_per_range: int,
     num_ranges: int,
     outputs_dir: str = "outputs",
+    view: str = "horizontal",
 ) -> Dict[str, Any]:
     """High-level end-to-end pipeline: segment → save slices → analyze.
 
@@ -629,7 +677,7 @@ def run_pipeline_for_niftis(
     )
 
     net_type, _ = MODEL_CONFIGS[model_name]
-    png_root = os.path.join(outputs_dir, f"{net_type}_{model_name}_png")
+    png_root = os.path.join(outputs_dir, f"{net_type}_{model_name}_{view}_png")
     os.makedirs(png_root, exist_ok=True)
 
     generated_folders: List[str] = []
@@ -639,6 +687,7 @@ def run_pipeline_for_niftis(
             output_root_dir=png_root,
             lower_percent=lower_percent,
             upper_percent=upper_percent,
+            view=view,
         )
         generated_folders.append(folder)
 
@@ -646,6 +695,7 @@ def run_pipeline_for_niftis(
         selected_folders=generated_folders,
         pixels_per_range=pixels_per_range,
         num_ranges=num_ranges,
+        view=view,
     )
 
     return {
@@ -726,6 +776,7 @@ def compute_and_save_correlations(
     save_dir: str,
     lower_percent: float,
     upper_percent: float,
+    view: str = "horizontal",
 ) -> Dict[str, str]:
     os.makedirs(save_dir, exist_ok=True)
     gt_df, pred_df = load_gt_and_summary(gt_csv_path, summary_csv_path)
@@ -735,8 +786,8 @@ def compute_and_save_correlations(
 
     l = _sanitize_thresh(lower_percent)
     u = _sanitize_thresh(upper_percent)
-    pearson_path = os.path.join(save_dir, f"correlation_pearson_l{l}_u{u}.csv")
-    spearman_path = os.path.join(save_dir, f"correlation_spearman_l{l}_u{u}.csv")
+    pearson_path = os.path.join(save_dir, f"correlation_pearson_l{l}_u{u}_{view}.csv")
+    spearman_path = os.path.join(save_dir, f"correlation_spearman_l{l}_u{u}_{view}.csv")
 
     pearson_df.to_csv(pearson_path)
     spearman_df.to_csv(spearman_path)
