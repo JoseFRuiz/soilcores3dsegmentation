@@ -8,15 +8,29 @@ from typing import List
 def move_results_to_unique_folder(outputs_dir: str, model: str, view: str, lower: int, upper: int) -> None:
     """Move the results to a unique folder to prevent overwriting"""
     # Get the network type from model name
-    net_type = "unetr" if "unetr" in model.lower() else "unet" if "unet" in model.lower() else "dynunet" if "dynunet" in model.lower() else "segresnet"
+    # Check for more specific patterns first to avoid false matches
+    if "unetr" in model.lower() or "num_heads" in model.lower():
+        net_type = "unetr"
+    elif "dynunet" in model.lower():
+        net_type = "dynunet"
+    elif "unet" in model.lower():
+        net_type = "unet"
+    else:
+        net_type = "segresnet"
     
     # Source folders (original structure)
     nifti_source = os.path.join(outputs_dir, model)
     png_source = os.path.join(outputs_dir, f"{net_type}_{model}_{view}_png")
     
+    # Check for alternative naming pattern (double prefix)
+    # The model name might already contain the network type, so we check both patterns
+    png_source_alt = os.path.join(outputs_dir, f"{net_type}_{net_type}_{model}_{view}_png")
+    png_source_alt2 = os.path.join(outputs_dir, f"{net_type}_{model}_{view}_png")
+    
     # Destination folders (with threshold suffix)
     nifti_dest = os.path.join(outputs_dir, f"{model}_l{lower}_u{upper}")
-    png_dest = os.path.join(outputs_dir, f"{net_type}_{model}_{view}_l{lower}_u{upper}_png")
+    # For PNG destination, use the model name directly (it already contains the network type)
+    png_dest = os.path.join(outputs_dir, f"{model}_{view}_l{lower}_u{upper}_png")
     
     # Move NIfTI files
     if os.path.exists(nifti_source):
@@ -25,12 +39,25 @@ def move_results_to_unique_folder(outputs_dir: str, model: str, view: str, lower
         shutil.move(nifti_source, nifti_dest)
         print(f"✓ Moved NIfTI files to: {nifti_dest}")
     
-    # Move PNG files
+    # Move PNG files - check all possible source patterns
+    png_source_to_use = None
     if os.path.exists(png_source):
+        png_source_to_use = png_source
+    elif os.path.exists(png_source_alt):
+        png_source_to_use = png_source_alt
+    elif os.path.exists(png_source_alt2):
+        png_source_to_use = png_source_alt2
+    
+    if png_source_to_use:
         if os.path.exists(png_dest):
             shutil.rmtree(png_dest)
-        shutil.move(png_source, png_dest)
-        print(f"✓ Moved PNG files to: {png_dest}")
+        shutil.move(png_source_to_use, png_dest)
+        print(f"✓ Moved PNG files from {png_source_to_use} to: {png_dest}")
+    else:
+        print(f"⚠ No PNG source folder found. Checked:")
+        print(f"  1. {png_source}")
+        print(f"  2. {png_source_alt}")
+        print(f"  3. {png_source_alt2}")
 
 def run_cli_with_threshold(lower: int, upper: int, nifti_files: List[str], model: str, 
                           pixels_per_range: int, num_ranges: int, outputs_dir: str, 
@@ -93,8 +120,8 @@ def parse_arguments():
     parser.add_argument('--view', required=True, choices=['horizontal', 'vertical'],
                        help='View type: horizontal (6×6 cm slices) or vertical (30×6 cm slices)')
     
-    parser.add_argument('--disk', default='H:', 
-                       help='Disk drive letter (default: H:)')
+    parser.add_argument('--disk', default='F:', 
+                       help='Disk drive letter (default: F:)')
     
     parser.add_argument('--pixels-per-range', type=int, default=2,
                        help='Pixels per range (default: 2)')
